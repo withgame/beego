@@ -23,8 +23,10 @@ import (
 	"net/http"
 	"net/http/fcgi"
 	"os"
+	"os/signal"
 	"path"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/astaxie/beego/grace"
@@ -47,6 +49,7 @@ func init() {
 type App struct {
 	Handlers *ControllerRegister
 	Server   *http.Server
+	StopHook func()
 }
 
 // NewApp returns a new beego application.
@@ -126,9 +129,17 @@ func (app *App) Run(mws ...MiddleWare) {
 				server := grace.NewServer(httpsAddr, app.Handlers)
 				server.Server.ReadTimeout = app.Server.ReadTimeout
 				server.Server.WriteTimeout = app.Server.WriteTimeout
+				if app.StopHook != nil {
+					_ = server.RegisterSignalHook(grace.PreSignal, syscall.SIGHUP, app.StopHook)
+					_ = server.RegisterSignalHook(grace.PreSignal, syscall.SIGINT, app.StopHook)
+					_ = server.RegisterSignalHook(grace.PreSignal, syscall.SIGTERM, app.StopHook)
+				}
 				if BConfig.Listen.EnableMutualHTTPS {
 					if err := server.ListenAndServeMutualTLS(BConfig.Listen.HTTPSCertFile, BConfig.Listen.HTTPSKeyFile, BConfig.Listen.TrustCaFile); err != nil {
 						logs.Critical("ListenAndServeTLS: ", err, fmt.Sprintf("%d", os.Getpid()))
+						time.Sleep(100 * time.Microsecond)
+						endRunning <- true
+					} else {
 						time.Sleep(100 * time.Microsecond)
 						endRunning <- true
 					}
@@ -146,6 +157,9 @@ func (app *App) Run(mws ...MiddleWare) {
 						logs.Critical("ListenAndServeTLS: ", err, fmt.Sprintf("%d", os.Getpid()))
 						time.Sleep(100 * time.Microsecond)
 						endRunning <- true
+					} else {
+						time.Sleep(100 * time.Microsecond)
+						endRunning <- true
 					}
 				}
 			}()
@@ -155,11 +169,19 @@ func (app *App) Run(mws ...MiddleWare) {
 				server := grace.NewServer(addr, app.Handlers)
 				server.Server.ReadTimeout = app.Server.ReadTimeout
 				server.Server.WriteTimeout = app.Server.WriteTimeout
+				if app.StopHook != nil {
+					_ = server.RegisterSignalHook(grace.PreSignal, syscall.SIGHUP, app.StopHook)
+					_ = server.RegisterSignalHook(grace.PreSignal, syscall.SIGINT, app.StopHook)
+					_ = server.RegisterSignalHook(grace.PreSignal, syscall.SIGTERM, app.StopHook)
+				}
 				if BConfig.Listen.ListenTCP4 {
 					server.Network = "tcp4"
 				}
 				if err := server.ListenAndServe(); err != nil {
 					logs.Critical("ListenAndServe: ", err, fmt.Sprintf("%d", os.Getpid()))
+					time.Sleep(100 * time.Microsecond)
+					endRunning <- true
+				} else {
 					time.Sleep(100 * time.Microsecond)
 					endRunning <- true
 				}
@@ -236,6 +258,15 @@ func (app *App) Run(mws ...MiddleWare) {
 			}
 		}()
 	}
+	
+	ch := make(chan os.Signal)
+	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM, syscall.SIGKILL)
+	gotSig := <-ch
+	logs.Debug("gotSig:%v", gotSig)
+	if app.StopHook != nil {
+		app.StopHook()
+	}
+	endRunning <- true
 	<-endRunning
 }
 
