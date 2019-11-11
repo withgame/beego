@@ -119,12 +119,12 @@ func (d *DB) BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error) 
 }
 
 func (d *DB) getStmt(query string) (*sql.Stmt, error) {
-	d.RLock()
-	if stmt, ok := d.stmts[query]; ok {
-		d.RUnlock()
-		return stmt, nil
-	}
-	d.RUnlock()
+	//d.RLock()
+	//if stmt, ok := d.stmts[query]; ok {
+	//	d.RUnlock()
+	//	return stmt, nil
+	//}
+	//d.RUnlock()
 
 	stmt, err := d.Prepare(query)
 	if err != nil {
@@ -201,6 +201,7 @@ type alias struct {
 	DataSource   string
 	MaxIdleConns int
 	MaxOpenConns int
+	MaxConnLifes int
 	DB           *DB
 	DbBaser      dbBaser
 	TZ           *time.Location
@@ -327,6 +328,8 @@ func RegisterDataBase(aliasName, driverName, dataSource string, params ...int) e
 			SetMaxIdleConns(al.Name, v)
 		case 1:
 			SetMaxOpenConns(al.Name, v)
+		case 2:
+			SetConnMaxLifetime(al.Name, v)
 		}
 	}
 
@@ -377,6 +380,15 @@ func SetMaxOpenConns(aliasName string, maxOpenConns int) {
 	// for tip go 1.2
 	if fun := reflect.ValueOf(al.DB).MethodByName("SetMaxOpenConns"); fun.IsValid() {
 		fun.Call([]reflect.Value{reflect.ValueOf(maxOpenConns)})
+	}
+}
+
+// SetMaxLifes Change the max conns life for *sql.DB, use specify database alias name
+func SetConnMaxLifetime(aliasName string, conMaxLifeTime int) {
+	al := getDbAlias(aliasName)
+	al.MaxConnLifes = conMaxLifeTime
+	if conMaxLifeTime > 0 {
+		al.DB.DB.SetConnMaxLifetime(time.Duration(conMaxLifeTime) * time.Second)
 	}
 }
 
